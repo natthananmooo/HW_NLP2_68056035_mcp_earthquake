@@ -1,0 +1,12 @@
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+.DS_Store
+README.md
+test_server.py
+claude_desktop_config.example.json
+docs/
+*.png
