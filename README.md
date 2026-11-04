@@ -1,3 +1,7 @@
+![หน้าเว็บ USGS Earthquake Hazards Program](docs/images/USGS%20Earthquake%20Hazards%20Program.png)
+
+*หน้าเว็บ [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/) แหล่งข้อมูลแผ่นดินไหวของโปรเจกต์นี้*
+
 # Seismic & Insurance Analytics MCP Server
 
 งานวิชา Natural Language Processing หัวข้อ Agent and MCP Tool Integration (Lab C และ Lab D)
