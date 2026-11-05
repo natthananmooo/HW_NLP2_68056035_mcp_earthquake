@@ -143,7 +143,19 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 
 ### MCP Server รันบน Docker
 
-![Docker](docs/images/docker_starting_on_0.0.0.0_8000.png)
+![Docker](docs/images/docker_starting_annotated.png)
+
+แถบสีบนภาพตรงกับสัญลักษณ์ในตารางคำอธิบาย
+
+| สี | ข้อความใน log | ความหมาย |
+|---|---|---|
+| ⬜ | `What's next` และ `docker scout quickview` | ข้อความแนะนำของ Docker หลัง build เสร็จ ไม่เกี่ยวกับการทำงานของเซิร์ฟเวอร์ |
+| 🟩 | `Starting on 0.0.0.0:8000` | เซิร์ฟเวอร์เริ่มทำงานที่พอร์ต 8000 ซึ่งเป็นข้อความที่สไลด์ p. 21 ใช้ยืนยันผล |
+| 🟪 | `MCP : POST ...` และ `Health : GET ...` | ที่อยู่สำหรับเชื่อม MCP และตรวจสถานะเซิร์ฟเวอร์ |
+| 🟨 | `Started server process`, `Waiting for application startup`, `Application startup complete` | ขั้นตอนการเปิดเว็บเซิร์ฟเวอร์จนพร้อมทำงาน |
+| 🟧 | `StreamableHTTP session manager started` | ระบบ Streamable HTTP ของ MCP เริ่มทำงาน |
+| 🟫 | `Uvicorn running on http://0.0.0.0:8000` | เว็บเซิร์ฟเวอร์ Uvicorn พร้อมรับคำขอ |
+| 🟦 | `GET /health ... 200 OK` | Docker ตรวจแล้วว่าเซิร์ฟเวอร์ทำงานปกติ |
 
 ### ข้อมูลจาก TMD
 
@@ -212,7 +224,19 @@ Claude เรียก Tool หนึ่งครั้ง เซิร์ฟเ
 
 ### Config ของ Claude Desktop
 
-![Config](docs/images/claude_desktop_config_seismic-mcp-http.png)
+![Config](docs/images/claude_desktop_config_annotated.png)
+
+แถบสีบนภาพตรงกับสัญลักษณ์ในตารางคำอธิบาย
+
+| สี | ส่วนใน config | ความหมาย |
+|---|---|---|
+| 🟦 | `mcpServers` | กลุ่มรายการ MCP Server ที่ Claude Desktop จะเชื่อมต่อ |
+| 🟩 | `seismic-mcp-http` | ชื่อของ MCP Server ที่แสดงในแอปและในการเรียก Tool |
+| 🟪 | `command` | คำสั่งที่ Claude Desktop ใช้เปิดตัวเชื่อม คือ `npx` |
+| 🟨 | `args` | ค่าที่ส่งให้ `npx` เพื่อรัน `mcp-remote` เชื่อมไปที่ `http://localhost:8000/mcp` ด้วย transport แบบ `http-only` |
+| ⬜ | `coworkUserFilesPath` และ `preferences` | การตั้งค่าอื่นของแอป ไม่เกี่ยวกับการเชื่อม MCP Server |
+
+Claude Desktop เปิด `mcp-remote` ผ่าน `npx` แล้ว `mcp-remote` จะส่งต่อการเรียก Tool ไปยังเซิร์ฟเวอร์ใน Docker ที่พอร์ต 8000
 
 ## สื่อการสอนจากโค้ดจริง
 
