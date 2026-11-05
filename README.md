@@ -34,7 +34,9 @@ MCP Server สำหรับดึงข้อมูลแผ่นดินไ
 ├── requirements.txt                     Python dependencies
 ├── Dockerfile                           ไฟล์ build Docker image
 ├── claude_desktop_config.example.json   ตัวอย่าง config ของ Claude Desktop
-└── docs/images/                         ภาพผลการทดสอบ
+└── docs/
+    ├── images/                          ภาพผลการทดสอบ
+    └── teaching/                        ภาพสื่อการสอน
 ```
 
 ## Tools
@@ -153,6 +155,22 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 ### Config ของ Claude Desktop
 
 ![Config](docs/images/claude_desktop_config_seismic-mcp-http.png)
+
+## สื่อการสอนจากโค้ดจริง
+
+ส่วนที่ระบุว่า "ยังไม่ได้แก้ในโค้ด" เป็นตัวอย่างตามชีท ไม่ใช่การทำงานปัจจุบันของเซิร์ฟเวอร์
+
+### @mcp.tool()
+
+![@mcp.tool](docs/teaching/mcp_tool_decorator.png)
+
+### Docstring
+
+![Docstring](docs/teaching/docstring_as_contract.png)
+
+### Error Handling
+
+![Error handling](docs/teaching/error_handling.png)
 
 ## ปัญหาที่พบและวิธีแก้
 
