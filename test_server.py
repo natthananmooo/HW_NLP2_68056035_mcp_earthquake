@@ -72,9 +72,74 @@ def test_tmd_empty_day(monkeypatch):
     assert asyncio.run(s.tmd_get_daily_earthquakes("2026-03-07"))["events"] == []
 
 
-def test_partial_radius_rejected():
-    with pytest.raises(ValueError):
-        asyncio.run(s.usgs_search_earthquakes("2026-03-01", "2026-03-07", latitude=13.0))
+def test_partial_radius_returns_structured_error():
+    r = asyncio.run(s.usgs_search_earthquakes("2026-03-01", "2026-03-07", latitude=13.0))
+    assert set(r) == {"error", "code", "hint"}
+    assert r["code"] == "INVALID_ARG"
+
+
+@pytest.mark.parametrize("days", [0, 8])
+def test_days_out_of_range_returns_hint(days):
+    r = asyncio.run(s.tmd_get_recent_earthquakes(days=days))
+    assert r["code"] == "INVALID_ARG"
+    assert r["hint"] == "Use a value between 1 and 7."
+
+
+def test_invalid_date_returns_hint():
+    r = asyncio.run(s.tmd_get_daily_earthquakes("04-11-2026"))
+    assert r["code"] == "INVALID_ARG"
+    assert "YYYY-MM-DD" in r["hint"]
+
+
+def test_payout_missing_coordinates_returns_error():
+    r = s.compute_parametric_payout({"id": "E", "magnitude": 6}, assets)
+    assert r["code"] == "INVALID_ARG"
+
+
+def test_payout_percent_out_of_range_returns_error():
+    curve = [s.PayoutBand(max_distance_km=50, payout_percent=1.5)]
+    r = s.compute_parametric_payout(EVENT, assets, payout_curve=curve)
+    assert r["code"] == "INVALID_ARG"
+
+
+def test_upstream_timeout_returns_structured_error(monkeypatch):
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def get(self, url, params):
+            raise s.httpx.ReadTimeout("slow")
+
+    monkeypatch.setattr(s.httpx, "AsyncClient", Client)
+    r = asyncio.run(s.tmd_get_recent_earthquakes(days=1))
+    assert r["code"] == "UPSTREAM_TIMEOUT"
+    assert set(r) == {"error", "code", "hint"}
+
+
+def test_unexpected_failure_is_logged_and_raised(monkeypatch, caplog):
+    async def broken(url, params):
+        raise RuntimeError("bug")
+
+    monkeypatch.setattr(s, "_get_json", broken)
+    with pytest.raises(RuntimeError):
+        asyncio.run(s.usgs_search_earthquakes("2026-03-01", "2026-03-07"))
+    assert "unexpected failure in usgs_search_earthquakes" in caplog.text
+
+
+def test_schema_keeps_ranges_and_docstring_sections():
+    tools = {t.name: t for t in asyncio.run(s.mcp.list_tools())}
+    assert len(tools) == 5
+    days = tools["tmd_get_recent_earthquakes"].inputSchema["properties"]["days"]
+    assert (days["minimum"], days["maximum"], days["default"]) == (1, 7, 3)
+    for tool in tools.values():
+        for section in ("Use when", "Do NOT use", "Args:", "Returns:"):
+            assert section in tool.description
 
 
 def test_tmd_live_shape_is_filtered_to_requested_date(monkeypatch):

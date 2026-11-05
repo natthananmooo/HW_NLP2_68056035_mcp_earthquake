@@ -82,7 +82,23 @@ class PayoutAsset(MatchAsset):
 class PayoutBand(BaseModel):
     model_config = ConfigDict(extra="forbid")
     max_distance_km: float
-    payout_percent: Annotated[float, Field(ge=0, le=1)]
+    # บอกช่วงค่าใน schema และให้ Tool ตรวจเอง เพื่อตอบ error พร้อม hint
+    payout_percent: Annotated[float, Field(json_schema_extra={"minimum": 0, "maximum": 1})]
+
+
+# ------------------------------------------------------------- error handling
+# LVL 1 Recoverable: คืน dict ที่มี error, code, hint เพื่อให้ LLM แก้ argument หรือลองใหม่ได้
+# LVL 2 Fatal: บันทึก log แล้ว raise เพราะเป็นปัญหาที่ LLM แก้เองไม่ได้
+def error_result(error: str, code: str, hint: str) -> dict[str, str]:
+    return {"error": error, "code": code, "hint": hint}
+
+
+class UpstreamError(Exception):
+    """Recoverable failure while calling an external earthquake API."""
+
+    def __init__(self, error: str, code: str, hint: str) -> None:
+        super().__init__(error)
+        self.result = error_result(error, code, hint)
 
 
 # --------------------------------------------------------------------- helpers
@@ -185,7 +201,7 @@ def _tmd_items(payload: Any) -> list[dict[str, Any]]:
 
 
 # ฟังก์ชันกลางสำหรับเรียก API ภายนอก
-# แปลงปัญหาของ API เป็น ValueError ที่อ่านเข้าใจง่าย แล้วส่งต่อให้ Tool
+# แปลงปัญหาของ API เป็น UpstreamError ที่มี code และ hint แล้วส่งต่อให้ Tool
 async def _get_json(url: str, params: dict[str, Any]) -> Any:
     try:
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT, follow_redirects=True) as client:
@@ -193,18 +209,36 @@ async def _get_json(url: str, params: dict[str, Any]) -> Any:
             # ถ้า API ตอบ 4xx หรือ 5xx จะเกิด HTTPStatusError
             response.raise_for_status()
             return response.json()
+    # หมดเวลา: ลองใหม่ได้ จึงเป็น recoverable
+    except httpx.TimeoutException as exc:
+        raise UpstreamError(
+            f"Request to {url} timed out",
+            "UPSTREAM_TIMEOUT",
+            "Retry later or request a smaller time range.",
+        ) from exc
     # API ตอบกลับ แต่สถานะเป็น error
     except httpx.HTTPStatusError as exc:
-        raise ValueError(f"Upstream returned HTTP {exc.response.status_code}: {url}") from exc
-    # เชื่อมต่อไม่ได้ หรือหมดเวลา
+        raise UpstreamError(
+            f"Upstream returned HTTP {exc.response.status_code}: {url}",
+            "UPSTREAM_HTTP_ERROR",
+            "Check the arguments. If they are valid, retry later.",
+        ) from exc
+    # เชื่อมต่อไม่ได้
     except httpx.HTTPError as exc:
-        raise ValueError(f"Could not reach upstream {url}: {exc}") from exc
+        raise UpstreamError(
+            f"Could not reach upstream {url}: {exc}",
+            "UPSTREAM_UNAVAILABLE",
+            "Retry later. If it continues, check the network connection.",
+        ) from exc
     # API ตอบกลับ แต่ข้อมูลไม่ใช่ JSON
     except ValueError as exc:
-        raise ValueError(f"Upstream returned invalid JSON: {url}") from exc
+        raise UpstreamError(
+            f"Upstream returned invalid JSON: {url}",
+            "UPSTREAM_INVALID_RESPONSE",
+            "Retry later. Do not guess missing earthquake data.",
+        ) from exc
 
 
-# ดึงข้อมูล TMD ของวันที่ระบุ แล้วแปลงเป็น EarthquakeEvent
 async def _fetch_tmd(date: str) -> list[dict[str, Any]]:
     payload = await _get_json(TMD_URL, {**TMD_PARAMS, "Date": date})
     events = [normalize_tmd(item) for item in _tmd_items(payload)]
@@ -220,6 +254,7 @@ def _today() -> datetime:
 # ส่วนที่ 3: Tool สำหรับดึงข้อมูล
 # @mcp.tool() ลงทะเบียนฟังก์ชันด้านล่างให้เป็น MCP Tool
 # FastMCP สร้าง schema จากชื่อฟังก์ชัน type hint, Field และ docstring
+# json_schema_extra บอกช่วงค่าให้ LLM เห็น และให้ Tool ตรวจเองเพื่อตอบ hint ได้
 # ------------------------------------------------------------------ data tools
 @mcp.tool()
 async def usgs_search_earthquakes(
@@ -230,13 +265,48 @@ async def usgs_search_earthquakes(
     latitude: Annotated[float | None, Field(description="Center latitude for radius search, optional.")] = None,
     longitude: Annotated[float | None, Field(description="Center longitude for radius search, optional.")] = None,
     maxradiuskm: Annotated[float | None, Field(description="Search radius in kilometers, optional.")] = None,
-    limit: Annotated[int, Field(description="Maximum number of events.", ge=1, le=200)] = 20,
+    limit: Annotated[int, Field(description="Maximum number of events.", json_schema_extra={"minimum": 1, "maximum": 200})] = 20,
 ) -> dict[str, Any]:
-    """Search earthquakes from the USGS FDSN API with basic filters."""
+    """Search global earthquakes from the USGS FDSN API.
+
+    Use when you need earthquakes by date range, magnitude or distance from a location.
+
+    Do NOT use for Thai Meteorological Department reports. Use `tmd_get_daily_earthquakes`
+    or `tmd_get_recent_earthquakes` instead.
+
+    Args:
+        starttime: Start time as YYYY-MM-DD or ISO8601.
+        endtime: End time as YYYY-MM-DD or ISO8601.
+        minmagnitude: Minimum magnitude. Must not exceed maxmagnitude.
+        maxmagnitude: Maximum magnitude.
+        latitude: Search center latitude in degrees (-90 to 90).
+        longitude: Search center longitude in degrees (-180 to 180).
+        maxradiuskm: Search radius in km (>0).
+        limit: Maximum number of events (1-200).
+
+    Latitude, longitude and maxradiuskm must be provided together.
+
+    Returns:
+        events (list[EarthquakeEvent]): Matching earthquakes.
+        query (dict): Parameters sent to USGS.
+        On a recoverable failure: error (str), code (str), hint (str).
+    """
     # ตรวจล่วงหน้า: การค้นหาตามรัศมีต้องส่งครบทั้ง 3 ค่า
     radius = [latitude, longitude, maxradiuskm]
     if any(v is not None for v in radius) and any(v is None for v in radius):
-        raise ValueError("latitude, longitude and maxradiuskm must be provided together")
+        return error_result(
+            "latitude, longitude and maxradiuskm must be provided together",
+            "INVALID_ARG",
+            "Provide all three values or omit all three.",
+        )
+    if not 1 <= limit <= 200:
+        return error_result(f"limit {limit} out of range", "INVALID_ARG", "Use a value between 1 and 200.")
+    if maxmagnitude is not None and minmagnitude > maxmagnitude:
+        return error_result(
+            f"minmagnitude {minmagnitude} exceeds maxmagnitude {maxmagnitude}",
+            "INVALID_ARG",
+            "Use a minmagnitude that is not greater than maxmagnitude.",
+        )
     query = {
         "starttime": starttime,
         "endtime": endtime,
@@ -249,37 +319,88 @@ async def usgs_search_earthquakes(
     }
     # ตัดพารามิเตอร์ที่ไม่ได้ระบุออกก่อนส่งให้ USGS
     query = {k: v for k, v in query.items() if v is not None}
-    payload = await _get_json(USGS_URL, {"format": "geojson", **query})
-    return {"events": [normalize_usgs(f) for f in payload.get("features", [])], "query": query}
+    try:
+        payload = await _get_json(USGS_URL, {"format": "geojson", **query})
+        return {"events": [normalize_usgs(f) for f in payload.get("features", [])], "query": query}
+    except UpstreamError as exc:
+        return exc.result
+    except Exception:
+        log.exception("unexpected failure in usgs_search_earthquakes")
+        raise
 
 
 @mcp.tool()
 async def tmd_get_daily_earthquakes(
     date: Annotated[str | None, Field(description="YYYY-MM-DD. If omitted, use today's date.")] = None,
 ) -> dict[str, Any]:
-    """Get daily earthquakes from the TMD DailySeismicEvent demo API."""
+    """Get earthquakes reported by TMD for one Thai calendar date.
+
+    Use when you need Thai Meteorological Department data for one specific date.
+
+    Do NOT use for a multi-day period. Use `tmd_get_recent_earthquakes` instead.
+    Do NOT use for global searches. Use `usgs_search_earthquakes` instead.
+
+    Args:
+        date: Date as YYYY-MM-DD. If omitted, today's date in Thailand is used.
+
+    Returns:
+        events (list[EarthquakeEvent]): Earthquakes on that date.
+        query (dict): The resolved date.
+        On a recoverable failure: error (str), code (str), hint (str).
+    """
     # ถ้าไม่ได้ระบุวันที่ ให้ใช้วันนี้ตามเวลาไทย
     resolved = date or _today().strftime("%Y-%m-%d")
-    datetime.strptime(resolved, "%Y-%m-%d")  # rejects a malformed date
-    return {"events": await _fetch_tmd(resolved), "query": {"date": resolved}}
+    try:
+        datetime.strptime(resolved, "%Y-%m-%d")
+    except ValueError:
+        return error_result(f"date {resolved} is not valid", "INVALID_ARG", "Use the format YYYY-MM-DD.")
+    try:
+        return {"events": await _fetch_tmd(resolved), "query": {"date": resolved}}
+    except UpstreamError as exc:
+        return exc.result
+    except Exception:
+        log.exception("unexpected failure in tmd_get_daily_earthquakes")
+        raise
 
 
 @mcp.tool()
 async def tmd_get_recent_earthquakes(
-    days: Annotated[int, Field(description="Number of days back from today (including today).", ge=1, le=7)] = 3,
+    days: Annotated[int, Field(description="Number of days back from today (including today).", json_schema_extra={"minimum": 1, "maximum": 7})] = 3,
 ) -> dict[str, Any]:
-    """Get recent earthquakes from TMD over the last N days using DailySeismicEvent."""
-    today = _today()
-    events: dict[str, dict[str, Any]] = {}
-    for offset in range(days):
-        # ไล่วันจากวันนี้ย้อนกลับไป
-        date = (today - timedelta(days=offset)).strftime("%Y-%m-%d")
-        for event in await _fetch_tmd(date):
-            # เก็บเหตุการณ์ด้วย id เพื่อตัดข้อมูลซ้ำ
-            events.setdefault(event["id"], event)
-    # เรียงจากเหตุการณ์ล่าสุด
-    ordered = sorted(events.values(), key=lambda e: str(e["time"] or ""), reverse=True)
-    return {"events": ordered, "query": {"days": days}}
+    """Get recent earthquakes reported by TMD for the last N days.
+
+    Use when you need the latest Thai Meteorological Department reports across several days.
+
+    Do NOT use for one specific date. Use `tmd_get_daily_earthquakes` instead.
+    Do NOT use for global searches. Use `usgs_search_earthquakes` instead.
+
+    Args:
+        days: Number of days back from today, including today (1-7).
+
+    Returns:
+        events (list[EarthquakeEvent]): Unique earthquakes, newest first.
+        query (dict): The requested number of days.
+        On a recoverable failure: error (str), code (str), hint (str).
+    """
+    if not 1 <= days <= 7:
+        return error_result(f"days {days} out of range", "INVALID_ARG", "Use a value between 1 and 7.")
+    try:
+        today = _today()
+        events: dict[str, dict[str, Any]] = {}
+        for offset in range(days):
+            # ไล่วันจากวันนี้ย้อนกลับไป
+            date = (today - timedelta(days=offset)).strftime("%Y-%m-%d")
+            for event in await _fetch_tmd(date):
+                # เก็บเหตุการณ์ด้วย id เพื่อตัดข้อมูลซ้ำ
+                events.setdefault(event["id"], event)
+        # เรียงจากเหตุการณ์ล่าสุด
+        ordered = sorted(events.values(), key=lambda e: str(e["time"] or ""), reverse=True)
+        return {"events": ordered, "query": {"days": days}}
+    except UpstreamError as exc:
+        return exc.result
+    except Exception:
+        log.exception("unexpected failure in tmd_get_recent_earthquakes")
+        raise
 
 
 # ส่วนที่ 4: Tool สำหรับวิเคราะห์ประกันภัย
@@ -292,36 +413,65 @@ def match_events_to_assets(
     max_distance_km: Annotated[float, Field(description="Max distance to consider an asset affected.")] = 100,
     min_magnitude: Annotated[float, Field(description="Minimum magnitude to consider.")] = 4.5,
 ) -> dict[str, Any]:
-    """Match earthquake events to insured assets within a given radius and magnitude threshold."""
-    # ขั้นที่ 1: เก็บเฉพาะเหตุการณ์ที่มีข้อมูลครบและถึงเกณฑ์ขนาด
-    usable = []
-    for event in events:
-        magnitude, lat, lon = (_number(event.get(k)) for k in ("magnitude", "latitude", "longitude"))
-        if magnitude is not None and lat is not None and lon is not None and magnitude >= min_magnitude:
-            usable.append((event, lat, lon))
+    """Find insured assets near earthquake events.
 
-    # ขั้นที่ 2: คำนวณระยะจากทรัพย์สินแต่ละรายการไปยังแต่ละเหตุการณ์
-    matches = []
-    for asset in assets:
-        hits = []
-        for event, lat, lon in usable:
-            distance = haversine_km(lat, lon, asset.latitude, asset.longitude)
-            if distance <= max_distance_km:
-                hits.append({"event": event, "distance_km": round(distance, 2)})
-        # ส่งกลับเฉพาะทรัพย์สินที่มีเหตุการณ์อยู่ในรัศมี เรียงจากใกล้ไปไกล
-        if hits:
-            matches.append(
-                {
-                    "asset_id": asset.asset_id,
-                    "name": asset.name,
-                    "sum_insured": asset.sum_insured,
-                    "events": sorted(hits, key=lambda h: h["distance_km"]),
-                }
-            )
-    return {
-        "matches": matches,
-        "parameters": {"max_distance_km": max_distance_km, "min_magnitude": min_magnitude},
-    }
+    Use when you have EarthquakeEvent objects and need to know which assets are affected.
+
+    Do NOT use to fetch earthquakes. Use `usgs_search_earthquakes` or the TMD tools instead.
+    Do NOT use to calculate money. Use `compute_parametric_payout` instead.
+
+    Args:
+        events: EarthquakeEvent objects with magnitude, latitude and longitude.
+        assets: Assets with asset_id, latitude and longitude. name and sum_insured are optional.
+        max_distance_km: Maximum epicenter-to-asset distance in km (>=0).
+        min_magnitude: Minimum magnitude to consider.
+
+    Events with missing magnitude or coordinates are skipped.
+
+    Returns:
+        matches (list): asset_id, name, sum_insured and matched events with distance_km.
+        parameters (dict): max_distance_km and min_magnitude.
+        On a recoverable failure: error (str), code (str), hint (str).
+    """
+    if max_distance_km < 0:
+        return error_result(
+            f"max_distance_km {max_distance_km} out of range",
+            "INVALID_ARG",
+            "Use a value of 0 or greater.",
+        )
+    try:
+        # ขั้นที่ 1: เก็บเฉพาะเหตุการณ์ที่มีข้อมูลครบและถึงเกณฑ์ขนาด
+        usable = []
+        for event in events:
+            magnitude, lat, lon = (_number(event.get(k)) for k in ("magnitude", "latitude", "longitude"))
+            if magnitude is not None and lat is not None and lon is not None and magnitude >= min_magnitude:
+                usable.append((event, lat, lon))
+
+        # ขั้นที่ 2: คำนวณระยะจากทรัพย์สินแต่ละรายการไปยังแต่ละเหตุการณ์
+        matches = []
+        for asset in assets:
+            hits = []
+            for event, lat, lon in usable:
+                distance = haversine_km(lat, lon, asset.latitude, asset.longitude)
+                if distance <= max_distance_km:
+                    hits.append({"event": event, "distance_km": round(distance, 2)})
+            # ส่งกลับเฉพาะทรัพย์สินที่มีเหตุการณ์อยู่ในรัศมี เรียงจากใกล้ไปไกล
+            if hits:
+                matches.append(
+                    {
+                        "asset_id": asset.asset_id,
+                        "name": asset.name,
+                        "sum_insured": asset.sum_insured,
+                        "events": sorted(hits, key=lambda h: h["distance_km"]),
+                    }
+                )
+        return {
+            "matches": matches,
+            "parameters": {"max_distance_km": max_distance_km, "min_magnitude": min_magnitude},
+        }
+    except Exception:
+        log.exception("unexpected failure in match_events_to_assets")
+        raise
 
 
 @mcp.tool()
@@ -334,51 +484,100 @@ def compute_parametric_payout(
         list[PayoutBand] | None, Field(description="Optional distance-based payout curve.")
     ] = None,
 ) -> dict[str, Any]:
-    """Compute a simple parametric payout for an earthquake event and a set of assets, based on distance and magnitude thresholds."""
+    """Calculate parametric payouts for one earthquake.
+
+    Use when an EarthquakeEvent is available and you need payout amounts for insured assets.
+
+    Do NOT use to fetch earthquakes. Use `usgs_search_earthquakes` or the TMD tools instead.
+    To list nearby assets, use `match_events_to_assets`.
+
+    Args:
+        event: EarthquakeEvent with numeric magnitude, latitude and longitude.
+        assets: Assets with asset_id, latitude, longitude and sum_insured in THB (>=0).
+        min_magnitude_trigger: Minimum magnitude that can trigger a payout.
+        max_distance_km_trigger: Maximum epicenter-to-asset distance in km (>=0).
+        payout_curve: Distance bands. payout_percent is a fraction from 0.0 to 1.0.
+
+    Returns:
+        event_id (str): Evaluated event.
+        event_magnitude (float): Event magnitude.
+        parameters (dict): Triggers and payout curve used.
+        asset_payouts (list): asset_id, name, distance_km, sum_insured, payout_percent, payout_amount.
+        total_payout (float): Total payout in THB.
+        On a recoverable failure: error (str), code (str), hint (str).
+    """
     magnitude, lat, lon = (_number(event.get(k)) for k in ("magnitude", "latitude", "longitude"))
     # ตรวจล่วงหน้า: ต้องมีขนาดและพิกัดเป็นตัวเลขก่อนคำนวณ
     if magnitude is None or lat is None or lon is None:
-        raise ValueError("event must include numeric magnitude, latitude and longitude")
-
-    # ใช้ตารางที่ผู้ใช้ส่งมา ถ้าไม่มีจึงใช้ค่าเริ่มต้น
-    curve = (
-        [band.model_dump() for band in payout_curve]
-        if payout_curve is not None
-        else [dict(band) for band in DEFAULT_PAYOUT_CURVE]
-    )
-    # เงื่อนไขแรก: ขนาดแผ่นดินไหวต้องถึงเกณฑ์
-    triggered = magnitude >= min_magnitude_trigger
-    payouts = []
-    for asset in assets:
-        distance = haversine_km(lat, lon, asset.latitude, asset.longitude)
-        percent = 0.0
-        # เงื่อนไขที่สอง: ระยะทางต้องอยู่ในเกณฑ์
-        # จากนั้นใช้ช่วงแรกของตารางที่ครอบคลุมระยะนี้
-        if triggered and distance <= max_distance_km_trigger:
-            band = next((b for b in curve if distance <= b["max_distance_km"]), None)
-            percent = band["payout_percent"] if band else 0.0
-        payouts.append(
-            {
-                "asset_id": asset.asset_id,
-                "name": asset.name,
-                "distance_km": round(distance, 2),
-                "sum_insured": asset.sum_insured,
-                "payout_percent": percent,
-                # ค่าสินไหม = ทุนประกัน × อัตราจ่าย
-                "payout_amount": round(asset.sum_insured * percent, 2),
-            }
+        return error_result(
+            "event must include numeric magnitude, latitude and longitude",
+            "INVALID_ARG",
+            "Pass an EarthquakeEvent returned by an earthquake data tool.",
         )
-    return {
-        "event_id": event.get("id"),
-        "event_magnitude": magnitude,
-        "parameters": {
-            "min_magnitude_trigger": min_magnitude_trigger,
-            "max_distance_km_trigger": max_distance_km_trigger,
-            "payout_curve": curve,
-        },
-        "asset_payouts": payouts,
-        "total_payout": round(sum(p["payout_amount"] for p in payouts), 2),
-    }
+    if max_distance_km_trigger < 0:
+        return error_result(
+            f"max_distance_km_trigger {max_distance_km_trigger} out of range",
+            "INVALID_ARG",
+            "Use a value of 0 or greater.",
+        )
+    for asset in assets:
+        if asset.sum_insured < 0:
+            return error_result(
+                f"sum_insured of asset {asset.asset_id} is negative",
+                "INVALID_ARG",
+                "Use a sum_insured of 0 or greater.",
+            )
+    for band in payout_curve or []:
+        if not 0 <= band.payout_percent <= 1:
+            return error_result(
+                f"payout_percent {band.payout_percent} out of range",
+                "INVALID_ARG",
+                "Use a fraction between 0.0 and 1.0.",
+            )
+
+    try:
+        # ใช้ตารางที่ผู้ใช้ส่งมา ถ้าไม่มีจึงใช้ค่าเริ่มต้น
+        curve = (
+            [band.model_dump() for band in payout_curve]
+            if payout_curve is not None
+            else [dict(band) for band in DEFAULT_PAYOUT_CURVE]
+        )
+        # เงื่อนไขแรก: ขนาดแผ่นดินไหวต้องถึงเกณฑ์
+        triggered = magnitude >= min_magnitude_trigger
+        payouts = []
+        for asset in assets:
+            distance = haversine_km(lat, lon, asset.latitude, asset.longitude)
+            percent = 0.0
+            # เงื่อนไขที่สอง: ระยะทางต้องอยู่ในเกณฑ์
+            # จากนั้นใช้ช่วงแรกของตารางที่ครอบคลุมระยะนี้
+            if triggered and distance <= max_distance_km_trigger:
+                band = next((b for b in curve if distance <= b["max_distance_km"]), None)
+                percent = band["payout_percent"] if band else 0.0
+            payouts.append(
+                {
+                    "asset_id": asset.asset_id,
+                    "name": asset.name,
+                    "distance_km": round(distance, 2),
+                    "sum_insured": asset.sum_insured,
+                    "payout_percent": percent,
+                    # ค่าสินไหม = ทุนประกัน × อัตราจ่าย
+                    "payout_amount": round(asset.sum_insured * percent, 2),
+                }
+            )
+        return {
+            "event_id": event.get("id"),
+            "event_magnitude": magnitude,
+            "parameters": {
+                "min_magnitude_trigger": min_magnitude_trigger,
+                "max_distance_km_trigger": max_distance_km_trigger,
+                "payout_curve": curve,
+            },
+            "asset_payouts": payouts,
+            "total_payout": round(sum(p["payout_amount"] for p in payouts), 2),
+        }
+    except Exception:
+        log.exception("unexpected failure in compute_parametric_payout")
+        raise
 
 
 # ส่วนที่ 5: จุดตรวจสถานะ ใช้กับ HEALTHCHECK ใน Dockerfile และคำสั่ง curl

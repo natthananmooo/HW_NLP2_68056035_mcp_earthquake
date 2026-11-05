@@ -25,6 +25,10 @@ MCP Server สำหรับดึงข้อมูลแผ่นดินไ
 | Lab D | รันบน Docker | เสร็จ |
 | Lab D | เชื่อม Claude Desktop กับ MCP Server | เสร็จ |
 
+## Flow การทำงาน
+
+![Flow การทำงาน](docs/teaching/system_flow.png)
+
 ## โครงสร้างโปรเจกต์
 
 ```text
@@ -125,14 +129,15 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 
 ## ผลลัพธ์
 
-ทดสอบเมื่อ 4 พฤศจิกายน 2026 บน macOS ผลด้านล่างอาจเปลี่ยนตามข้อมูลล่าสุดของ API
+ทดสอบบน Docker เมื่อ 5 พฤศจิกายน 2026 ผลด้านล่างอาจเปลี่ยนตามข้อมูลล่าสุดของ API
 
 | การทดสอบ | ผล |
 |---|---|
-| Unit test | ผ่าน 10 ข้อ |
+| Unit test | ผ่าน 18 ข้อ |
+| ส่ง `days=9` ผ่าน `seismic-mcp-http` | ได้ `INVALID_ARG` พร้อม `hint` |
 | Docker | เซิร์ฟเวอร์เริ่มที่ `0.0.0.0:8000` |
-| USGS ผ่าน `seismic-mcp-http` | ได้ข้อมูลจริง |
-| TMD ย้อนหลัง 3 วัน | ได้ข้อมูลจริง 19 เหตุการณ์ |
+| USGS ขนาด 5.0 ขึ้นไปในรอบ 7 วัน | ได้ข้อมูลจริง 30 เหตุการณ์ |
+| TMD ย้อนหลัง 3 วัน | ได้ข้อมูลจริง 16 เหตุการณ์ |
 | จับคู่ทรัพย์สินที่ห่าง 689.14 กม. เกินรัศมี 500 กม. | ไม่เข้าเงื่อนไข ค่าสินไหม 0 บาท |
 | Payout กรณีสมมติ M6.0 ห่าง 2.02 กม. ทุน 1,000,000 บาท | จ่าย 50% เป็นเงิน 500,000 บาท |
 
@@ -143,6 +148,20 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 ### ข้อมูลจาก TMD
 
 ![TMD](docs/images/tmd_get_recent_earthquakes.png)
+
+### ข้อมูลจาก USGS
+
+![USGS](docs/images/usgs_search_earthquakes.png)
+
+### Structured Error
+
+![Structured error](docs/images/structured_error_days_9.png)
+
+### Log ของ Docker
+
+![Docker log TMD](docs/images/docker_log_tmd_call_tool.png)
+
+![Docker log USGS](docs/images/docker_log_usgs_call_tool.png)
 
 ### การจับคู่ทรัพย์สิน
 
@@ -158,7 +177,7 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 
 ## สื่อการสอนจากโค้ดจริง
 
-ส่วนที่ระบุว่า "ยังไม่ได้แก้ในโค้ด" เป็นตัวอย่างตามชีท ไม่ใช่การทำงานปัจจุบันของเซิร์ฟเวอร์
+ภาพชุดนี้สร้างจากโค้ดจริงในไฟล์ `seismic_mcp_server.py` ซึ่งแก้ docstring และ error handling ตามชีทแล้ว
 
 ### @mcp.tool()
 
@@ -183,13 +202,16 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 | JSON ใน config ผิดรูปแบบ | จุลภาคผิดตำแหน่ง | แก้จุลภาคแล้วตรวจด้วย `python3 -m json.tool` |
 | `seismic-mcp-http couldn't start` และ `ReferenceError: File is not defined` | Node.js 18 เก่าเกินไปสำหรับ `mcp-remote` | อัปเดต Node.js เป็น v26.13.0 |
 | คำตอบในแชตมาจากเซิร์ฟเวอร์ตัวเก่า | มี `seismic-mcp` เดิมอยู่ใน config และชื่อ Tool ซ้ำกัน | ลบตัวเดิมออก แล้วตรวจหัวข้อ `seismic-mcp-http` และ log `CallToolRequest` |
+| error ด้านช่วงค่าไม่มี `code` และ `hint` | `Field(ge=..., le=...)` ทำให้ pydantic ตัดคำขอก่อนเข้า Tool | บอกช่วงค่าใน `json_schema_extra` แล้วตรวจในฟังก์ชัน |
 | TMD คืนค่าว่าง | API จริงใช้ `DailyEarthquakes`, ไม่มี `EventID` และไม่กรองตาม `Date` | รองรับโครงสร้างจริง สร้าง ID จากเวลาและพิกัด และกรองวันที่ในเซิร์ฟเวอร์ |
 
 ## ความแตกต่างจาก spec
 
 - ใช้ Streamable HTTP แทน stdio ตาม requirement ของ Lab D
 - ใช้ `FastMCP` จากแพ็กเกจ `mcp`
-- เมื่อ Tool เกิดข้อผิดพลาด จะตอบเป็นผลลัพธ์ที่มี `isError: true`
+- ข้อผิดพลาดที่แก้ต่อได้จะตอบเป็น `error`, `code`, `hint` ตามชีท แทน JSON-RPC error
+- ข้อผิดพลาดที่ไม่คาดคิดจะบันทึก log แล้ว raise
+- Docstring ของ Tool เพิ่ม Use when, Do NOT use, Args และ Returns ตามชีท
 - อ่าน TMD ได้ทั้งโครงสร้างใน spec และโครงสร้างจาก API จริง
 
 ## ทดสอบโค้ด
