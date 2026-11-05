@@ -157,11 +157,50 @@ docker run --rm -p 8000:8000 seismic-mcp-http
 
 ![Structured error](docs/images/structured_error_days_9.png)
 
+**ที่มาของการทดสอบ `days=9`**
+
+`spec.md` หัวข้อ 6.3 `tmd_get_recent_earthquakes` กำหนดให้ `days` มีค่าเริ่มต้น 3 และรับค่าได้ตั้งแต่ 1 ถึง 7:
+
+```json
+"days": {
+  "type": "integer",
+  "description": "Number of days back from today (including today).",
+  "default": 3,
+  "minimum": 1,
+  "maximum": 7
+}
+```
+
+- ช่วง 1–7 มาจาก `spec.md`
+- รูปแบบ `error`, `code`, `hint` มาจากชีทหัวข้อ Error Handling Strategy
+- เลข 9 เป็นค่าทดสอบที่เลือกให้เกินค่าสูงสุด 7 ไม่ได้กำหนดไว้ใน `spec.md` หรือ Lab
+
 ### Log ของ Docker
 
-![Docker log TMD](docs/images/docker_log_tmd_call_tool.png)
+แถบสีบนภาพตรงกับสัญลักษณ์ในตารางคำอธิบาย
 
-![Docker log USGS](docs/images/docker_log_usgs_call_tool.png)
+| สี | ข้อความใน log | ความหมาย |
+|---|---|---|
+| 🟦 | `GET /health ... 200 OK` | Docker ตรวจว่าเซิร์ฟเวอร์ยังทำงานปกติ |
+| 🟨 | `Processing request of type CallToolRequest` | เซิร์ฟเวอร์ได้รับคำสั่งให้ทำงานของ Tool จาก Claude |
+| 🟩 | `HTTP Request: GET https://...` | เซิร์ฟเวอร์ส่งคำขอไปยังต้นทางข้อมูลแผ่นดินไหว และ API ตอบ `200 OK` |
+| 🟪 | `POST /mcp ... 200 OK` | เซิร์ฟเวอร์ตอบผลกลับให้ Claude ผ่าน `mcp-remote` สำเร็จ |
+| 🟧 | `Terminating session: None` | จบคำขอนั้น เพราะเซิร์ฟเวอร์ทำงานแบบ stateless |
+| 🟥 | `CallToolRequest` ที่ไม่มีบรรทัด `HTTP Request` ตามมา | กรณี `days=9` ซึ่ง Tool ปฏิเสธค่าผิดก่อนเรียก API |
+
+#### ขอข้อมูล TMD ย้อนหลัง 3 วัน
+
+Claude เรียก Tool หนึ่งครั้ง เซิร์ฟเวอร์จึงส่งคำขอไป TMD 3 รอบ สำหรับวันที่ 5, 4 และ 3 พฤศจิกายน แล้วตอบผลกลับให้ Claude
+
+![Docker log TMD](docs/images/docker_log_tmd_annotated.png)
+
+#### ขอข้อมูล USGS และทดสอบ days=9
+
+ช่วงบนเป็นการส่งคำขอไป USGS ส่วนแถบสีแดงคือการทดสอบ `days=9` ซึ่งไม่มีการเรียก API ภายนอก
+
+ค่า `%3A` ใน URL คือเครื่องหมาย `:` และเวลา `03:52` เป็นเวลา UTC ซึ่งตรงกับ 10:52 น. ตามเวลาไทย
+
+![Docker log USGS](docs/images/docker_log_usgs_annotated.png)
 
 ### การจับคู่ทรัพย์สิน
 
