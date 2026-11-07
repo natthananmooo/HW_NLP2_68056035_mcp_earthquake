@@ -256,6 +256,20 @@ Claude Desktop เปิด `mcp-remote` ผ่าน `npx` แล้ว `mcp-re
 | ตรวจสถานะ | ผ่าน Claude เท่านั้น | `curl http://localhost:8000/health` |
 | config | `"command": "python"` | `npx mcp-remote` ไปที่ `http://localhost:8000/mcp` |
 
+#### คุยกันอย่างไร
+
+stdio คือการคุยกันระหว่างโปรแกรมภายในเครื่องเดียวผ่าน `stdin` และ `stdout` ส่วน Streamable HTTP ส่งข้อความผ่านเครือข่ายตามที่อยู่และพอร์ต งานนี้ยังรันบน Mac เครื่องเดียว แต่ Claude ต้องส่งคำขอผ่าน `localhost:8000` เพื่อเข้า Docker container
+
+![stdio คุยในเครื่อง กับ Streamable HTTP คุยผ่านเครือข่าย](docs/teaching/stdio_vs_http_network.png)
+
+#### ตัวอย่างการคุยข้ามเครื่อง
+
+เพราะเซิร์ฟเวอร์ตั้ง `HOST = 0.0.0.0` ถ้าเปลี่ยน `localhost` ใน config เป็น IP ของเครื่องที่รันเซิร์ฟเวอร์ Claude ก็เรียก Tool ข้ามเครื่องได้
+
+> ภาพนี้เป็นตัวอย่างประกอบการเรียน ไม่ได้อยู่ใน requirement ของ Lab และยังไม่ได้ทดสอบข้ามเครื่องจริง IP ในภาพเป็นค่าสมมติ
+
+![ตัวอย่างการเปลี่ยน localhost เป็น IP](docs/teaching/remote_ip_example.png)
+
 ### @mcp.tool()
 
 ![@mcp.tool](docs/teaching/mcp_tool_decorator.png)
