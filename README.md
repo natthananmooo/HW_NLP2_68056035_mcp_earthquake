@@ -270,6 +270,20 @@ stdio คือการคุยกันระหว่างโปรแก�
 
 ![ตัวอย่างการเปลี่ยน localhost เป็น IP](docs/teaching/remote_ip_example.png)
 
+### Docker บน Mac
+
+Container ต้องใช้ kernel ของ Linux เพราะ image สร้างจาก `python:3.11-slim` ซึ่งเป็น Debian Linux บน Mac จึงมี Docker Desktop เปิด Linux VM ขนาดเล็กไว้เบื้องหลัง แล้วรัน container ในนั้น ทุกชั้นใช้ CPU, RAM และดิสก์ของ Mac เครื่องเดียวกัน
+
+![Docker บน Mac](docs/teaching/docker_on_mac.png)
+
+| | VM | Container |
+|---|---|---|
+| ระบบปฏิบัติการ | มีของตัวเองครบชุด | ใช้ kernel ร่วมกัน |
+| ขนาด / RAM | หลาย GB | หลักสิบ MB |
+| เวลาเปิด | หลายสิบวินาที | ไม่กี่วินาที |
+
+> Lab D p. 18 กำหนดให้รันบน Docker ส่วนเรื่อง Linux VM เป็นความรู้เสริมที่อธิบายว่าทำไมรันบน Mac ได้ ตัวโค้ด `seismic_mcp_server.py` รันได้ทุกระบบที่มี Python 3.10 ขึ้นไป
+
 ### @mcp.tool()
 
 ![@mcp.tool](docs/teaching/mcp_tool_decorator.png)
