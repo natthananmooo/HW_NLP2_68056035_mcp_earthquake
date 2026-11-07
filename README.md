@@ -242,6 +242,20 @@ Claude Desktop เปิด `mcp-remote` ผ่าน `npx` แล้ว `mcp-re
 
 ภาพชุดนี้สร้างจากโค้ดจริงในไฟล์ `seismic_mcp_server.py` ซึ่งแก้ docstring และ error handling ตามชีทแล้ว
 
+### stdio กับ Streamable HTTP
+
+`spec.md` หัวข้อ 2 และ 8 กำหนด transport แบบ stdio แต่สไลด์ Lab D p. 18 กำหนดให้ใช้ Streamable HTTP และรันบน Docker งานนี้จึงเปลี่ยนเฉพาะช่องทางสื่อสาร ส่วน Tool ทั้ง 5 ตัว input/output และ EarthquakeEvent ยังเป็นไปตาม spec
+
+![stdio กับ Streamable HTTP](docs/teaching/stdio_vs_streamable_http.png)
+
+| | stdio (ตาม spec) | Streamable HTTP (งานนี้) |
+|---|---|---|
+| ผู้เปิดเซิร์ฟเวอร์ | Claude Desktop | รันเองใน Docker |
+| ช่องทาง | `stdin` / `stdout` | HTTP POST ที่ `/mcp` |
+| ตำแหน่งเซิร์ฟเวอร์ | เครื่องเดียวกันเท่านั้น | Docker หรือเครื่องอื่นได้ |
+| ตรวจสถานะ | ผ่าน Claude เท่านั้น | `curl http://localhost:8000/health` |
+| config | `"command": "python"` | `npx mcp-remote` ไปที่ `http://localhost:8000/mcp` |
+
 ### @mcp.tool()
 
 ![@mcp.tool](docs/teaching/mcp_tool_decorator.png)
