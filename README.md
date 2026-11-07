@@ -284,6 +284,35 @@ Container ต้องใช้ kernel ของ Linux เพราะ image ส
 
 > Lab D p. 18 กำหนดให้รันบน Docker ส่วนเรื่อง Linux VM เป็นความรู้เสริมที่อธิบายว่าทำไมรันบน Mac ได้ ตัวโค้ด `seismic_mcp_server.py` รันได้ทุกระบบที่มี Python 3.10 ขึ้นไป
 
+### หน้าที่ของ Docker
+
+Docker เปิดและดูแลเซิร์ฟเวอร์ `seismic_mcp_server.py` ซึ่งมี Tool ทั้ง 5 ตัว ส่วน Claude Desktop เป็นผู้เลือกว่าจะเรียก Tool ไหน ระหว่างใช้งานต้องเปิด Docker ค้างไว้ ถ้าปิด Claude จะเรียก Tool ไม่ได้
+
+![หน้าที่ของ Docker](docs/teaching/docker_role.png)
+
+| องค์ประกอบ | หน้าที่ |
+|---|---|
+| Docker | เปิดเซิร์ฟเวอร์ รวม Python และไลบรารีไว้ครบ เปิดพอร์ต 8000 และตรวจสถานะด้วย `/health` |
+| `seismic_mcp_server.py` | มี Tool 5 ตัว รับคำขอ รัน Tool ที่ถูกเลือก เรียก USGS และ TMD แล้วส่งผลเป็น JSON |
+| Claude Desktop | อ่านคำถาม เลือก Tool และ argument ส่งคำขอผ่าน `mcp-remote` และสรุปผล |
+
+### Protocol กับ Port
+
+8000 คือหมายเลขพอร์ต ไม่ใช่ protocol ทั้งสองทำงานคู่กันแต่เป็นคนละเรื่อง
+
+```
+http://   localhost   :8000   /mcp
+  │          │          │       │
+protocol   เครื่อง     port    path
+```
+
+| | คืออะไร | ในงานนี้ |
+|---|---|---|
+| Protocol | กติกาที่ใช้คุยกัน | HTTP (Streamable HTTP) ข้างในเป็นข้อความ MCP แบบ JSON-RPC |
+| Port | หมายเลขช่องทางเข้าโปรแกรมบนเครื่อง | 8000 ตามค่าเริ่มต้น `PORT` ในโค้ด |
+
+เปลี่ยนพอร์ตได้ เช่น `docker run --rm -p 8001:8000 seismic-mcp-http` แล้วใช้ `http://localhost:8001/mcp` ใน config โดย protocol ยังเป็น HTTP เหมือนเดิม
+
 ### @mcp.tool()
 
 ![@mcp.tool](docs/teaching/mcp_tool_decorator.png)
