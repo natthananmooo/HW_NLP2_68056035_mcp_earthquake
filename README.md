@@ -2,6 +2,10 @@
 
 *หน้าเว็บ [USGS Earthquake Hazards Program](https://earthquake.usgs.gov/) แหล่งข้อมูลแผ่นดินไหวของโปรเจกต์นี้*
 
+![หน้าเว็บ Open Data of TMD](docs/images/TMD%20Open%20Data.png)
+
+*หน้าเว็บ [Open Data of TMD](https://data.tmd.go.th/) ของกรมอุตุนิยมวิทยา แหล่งข้อมูลแผ่นดินไหวในประเทศไทยของโปรเจกต์นี้*
+
 # Seismic & Insurance Analytics MCP Server
 
 งานวิชา Natural Language Processing หัวข้อ Agent and MCP Tool Integration (Lab C และ Lab D)
@@ -359,4 +363,6 @@ pytest -q
 
 - [USGS Earthquake FDSN API](https://earthquake.usgs.gov/fdsnws/event/1/)
 - [Thai Meteorological Department Open Data](https://data.tmd.go.th/)
+- [TMD DailySeismicEvent API ที่โค้ดเรียก](https://data.tmd.go.th/api/DailySeismicEvent/v1/?uid=api&ukey=api12345&format=json) ใช้คีย์ทดลองสาธารณะตาม `spec.md`
+- [กองเฝ้าระวังแผ่นดินไหว กรมอุตุนิยมวิทยา](https://earthquake.tmd.go.th/)
 - สไลด์วิชา Natural Language Processing โดย Mr. Aekanun Thongtae
