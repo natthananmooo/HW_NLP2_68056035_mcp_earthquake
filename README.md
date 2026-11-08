@@ -317,6 +317,20 @@ protocol   เครื่อง     port    path
 
 เปลี่ยนพอร์ตได้ เช่น `docker run --rm -p 8001:8000 seismic-mcp-http` แล้วใช้ `http://localhost:8001/mcp` ใน config โดย protocol ยังเป็น HTTP เหมือนเดิม
 
+### FastMCP
+
+FastMCP เป็นไลบรารีในแพ็กเกจ `mcp` ที่ทำหน้าที่เป็นตัวกลางระหว่างข้อความ MCP ที่ Claude ส่งมา กับฟังก์ชัน Tool ที่เราเขียน เราเขียนแค่ฟังก์ชัน Python และติด `@mcp.tool()` ส่วน FastMCP จัดการ protocol ให้
+
+![FastMCP ทำหน้าที่อะไร](docs/teaching/fastmcp_role.png)
+
+| หน้าที่ของ FastMCP | ในงานนี้ |
+|---|---|
+| ลงทะเบียน Tool | `@mcp.tool()` เก็บฟังก์ชันไว้ในรายการ Tool |
+| สร้าง schema | ชื่อฟังก์ชัน → `name`, docstring → `description`, type hint และ `Field` → `inputSchema` |
+| ตอบ method ของ MCP | `initialize`, `tools/list`, `tools/call` |
+| ตรวจชนิดข้อมูล | ส่ง `days="abc"` จะถูกปฏิเสธก่อนเข้า Tool |
+| เปิดเซิร์ฟเวอร์ | `mcp.run(transport="streamable-http")` เปิด Uvicorn ที่ `:8000/mcp` |
+
 ### @mcp.tool()
 
 ![@mcp.tool](docs/teaching/mcp_tool_decorator.png)
